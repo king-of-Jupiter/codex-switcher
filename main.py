@@ -1,0 +1,1713 @@
+import base64
+from datetime import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import urllib.error
+import urllib.request
+
+# ================= VERCEL DESIGN TOKENS =================
+THEME = {
+    "bg_root": "#000000",
+    "bg_surface": "#0a0a0a",
+    "bg_subtle": "#141414",
+    "bg_hover": "#1f1f1f",
+    "border_subtle": "#222222",
+    "border_active": "#383838",
+    "text_primary": "#ededed",
+    "text_secondary": "#888888",
+    "text_muted": "#555555",
+    "accent_white": "#ffffff",
+    "accent_blue": "#0070f3",
+    "accent_green": "#10b981",
+    "accent_purple": "#a855f7",
+    "accent_cyan": "#06b6d4",
+    "accent_red": "#f43f5e",
+    "badge_plus_bg": "#052e16",
+    "badge_plus_fg": "#4ade80",
+    "badge_ticket_bg": "#2e1065",
+    "badge_ticket_fg": "#c084fc",
+}
+
+
+def apply_dark_titlebar(window):
+    """Включение темного заголовка на Windows 10/11."""
+    if sys.platform == "win32":
+        try:
+            from ctypes import byref, c_int, sizeof, windll
+
+            HWND = windll.user32.GetParent(window.winfo_id())
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            windll.dwmapi.DwmSetWindowAttribute(
+                HWND,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                byref(c_int(1)),
+                sizeof(c_int),
+            )
+        except Exception:
+            pass
+
+
+# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ API И JWT =================
+def decode_jwt_payload(token_str: str) -> dict:
+    try:
+        parts = token_str.split(".")
+        if len(parts) < 2:
+            return {}
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(
+            base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode(
+                "utf-8"
+            )
+        )
+    except Exception:
+        return {}
+
+
+def extract_auth_info_from_dict(data: dict) -> dict:
+    info = {
+        "email": "—",
+        "name": "",
+        "plan": "FREE",
+        "expires": "—",
+        "account_id": "",
+        "is_valid": True,
+    }
+    info["account_id"] = data.get("account_id") or data.get(
+        "tokens", {}
+    ).get("account_id", "")
+
+    meta = data.get("_meta", {})
+    if isinstance(meta, dict):
+        if meta.get("email"):
+            info["email"] = meta["email"]
+        if meta.get("plan_type"):
+            info["plan"] = meta["plan_type"].upper()
+
+    tokens = data.get("tokens", {})
+    jwt_payload = {}
+    if isinstance(tokens, dict):
+        if tokens.get("id_token"):
+            jwt_payload.update(decode_jwt_payload(tokens["id_token"]))
+        if tokens.get("access_token"):
+            acc_jwt = decode_jwt_payload(tokens["access_token"])
+            for k, v in acc_jwt.items():
+                if k not in jwt_payload or not jwt_payload[k]:
+                    jwt_payload[k] = v
+
+    if not info["account_id"]:
+        auth_claim = jwt_payload.get("https://api.openai.com/auth", {})
+        if isinstance(auth_claim, dict):
+            info["account_id"] = auth_claim.get("chatgpt_account_id", "")
+
+    if info["email"] == "—":
+        info["email"] = (
+            jwt_payload.get("email")
+            or jwt_payload.get("https://api.openai.com/profile", {}).get(
+                "email"
+            )
+            or "—"
+        )
+
+    info["name"] = (
+        jwt_payload.get("name")
+        or jwt_payload.get("https://api.openai.com/profile", {}).get("name")
+        or ""
+    )
+
+    auth_data = jwt_payload.get("https://api.openai.com/auth", {})
+    if isinstance(auth_data, dict):
+        plan = auth_data.get("chatgpt_plan_type")
+        if plan:
+            info["plan"] = plan.upper()
+        until = auth_data.get("chatgpt_subscription_active_until")
+        if until:
+            info["expires"] = until.split("T")[0]
+
+    return info
+
+
+def extract_auth_info(filepath: Path) -> dict:
+    if not filepath.exists():
+        return {
+            "email": "—",
+            "name": "",
+            "plan": "FREE",
+            "expires": "—",
+            "account_id": "",
+            "is_valid": False,
+        }
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return extract_auth_info_from_dict(data)
+    except Exception:
+        return {
+            "email": "—",
+            "name": "",
+            "plan": "FREE",
+            "expires": "—",
+            "account_id": "",
+            "is_valid": False,
+        }
+
+
+def refresh_openai_token(auth_filepath: Path) -> bool:
+    try:
+        with open(auth_filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        refresh_token = data.get("tokens", {}).get("refresh_token")
+        if not refresh_token:
+            return False
+
+        payload = json.dumps(
+            {
+                "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }
+        ).encode("utf-8")
+
+        cmd = [
+            "curl.exe",
+            "-s",
+            "-X",
+            "POST",
+            "https://auth.openai.com/oauth/token",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "User-Agent: Codex Desktop",
+            "-d",
+            payload.decode("utf-8"),
+        ]
+        startupinfo = (
+            subprocess.STARTUPINFO() if sys.platform == "win32" else None
+        )
+        if startupinfo:
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            startupinfo=startupinfo,
+            timeout=10,
+        )
+        res_data = json.loads(r.stdout.strip())
+
+        if "access_token" in res_data:
+            data["tokens"]["access_token"] = res_data["access_token"]
+            if "refresh_token" in res_data:
+                data["tokens"]["refresh_token"] = res_data["refresh_token"]
+            if "id_token" in res_data:
+                data["tokens"]["id_token"] = res_data["id_token"]
+            data["last_refresh"] = datetime.utcnow().isoformat() + "Z"
+
+            with open(auth_filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _curl_get(url: str, token: str, account_id: str) -> dict:
+    cmd = [
+        "curl.exe",
+        "-s",
+        "-X",
+        "GET",
+        url,
+        "-H",
+        f"Authorization: Bearer {token}",
+        "-H",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "-H",
+        "Accept: application/json",
+        "-H",
+        "Origin: https://chatgpt.com",
+        "-H",
+        "Referer: https://chatgpt.com/",
+    ]
+    if account_id:
+        cmd.extend(["-H", f"chatgpt-account-id: {account_id}"])
+
+    startupinfo = subprocess.STARTUPINFO() if sys.platform == "win32" else None
+    if startupinfo:
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    res = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        startupinfo=startupinfo,
+        timeout=10,
+    )
+    raw = res.stdout.strip()
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"error": raw[:250]}
+    return {"error": res.stderr.strip() or "Empty response"}
+
+
+def fetch_api_usage_raw(auth_filepath: Path) -> dict:
+    if not auth_filepath.exists():
+        return {"error": "Файл auth.json не найден"}
+
+    try:
+        with open(auth_filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        tokens = data.get("tokens", {})
+        access_token = tokens.get("access_token")
+
+        info = extract_auth_info(auth_filepath)
+        account_id = info.get("account_id", "")
+
+        if not access_token:
+            return {"error": "Отсутствует access_token"}
+
+        endpoints = [
+            "https://chatgpt.com/backend-api/wham/usage",
+            "https://chatgpt.com/backend-api/codex/usage",
+        ]
+
+        def _try_request(tok: str):
+            if sys.platform == "win32" or shutil.which("curl"):
+                for url in endpoints:
+                    res = _curl_get(url, tok, account_id)
+                    if (
+                        "error" not in res
+                        and ("rate_limit" in res or "plan_type" in res)
+                    ):
+                        return res
+
+            headers = {
+                "Authorization": f"Bearer {tok}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Origin": "https://chatgpt.com",
+                "Referer": "https://chatgpt.com/",
+            }
+            if account_id:
+                headers["chatgpt-account-id"] = account_id
+
+            for url in endpoints:
+                try:
+                    req_obj = urllib.request.Request(
+                        url, headers=headers, method="GET"
+                    )
+                    with urllib.request.urlopen(req_obj, timeout=8) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+                except Exception:
+                    continue
+
+            return {"error": "HTTP 403: Forbidden (Cloudflare WAF / Token Expired)"}
+
+        res_data = _try_request(access_token)
+
+        if "error" in res_data and (
+            "403" in str(res_data["error"]) or "401" in str(res_data["error"])
+        ):
+            if refresh_openai_token(auth_filepath):
+                with open(auth_filepath, "r", encoding="utf-8") as f:
+                    new_data = json.load(f)
+                new_token = new_data.get("tokens", {}).get("access_token")
+                return _try_request(new_token)
+
+        return res_data
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def parse_dynamic_usage(raw_data: dict) -> dict:
+    if "error" in raw_data:
+        return {"error": raw_data["error"], "raw": raw_data}
+
+    parsed = {
+        "email": raw_data.get("email", ""),
+        "plan_type": raw_data.get("plan_type", "—").upper(),
+        "limit_reached": False,
+        "credits": raw_data.get("credits", {}).get("balance", "0"),
+        "reset_tickets": 0,
+        "applicable_tickets": 0,
+        "windows": [],
+        "raw": raw_data,
+    }
+
+    reset_block = raw_data.get("rate_limit_reset_credits") or raw_data.get(
+        "resets"
+    )
+    if isinstance(reset_block, dict):
+        parsed["reset_tickets"] = reset_block.get("available_count", 0)
+        parsed["applicable_tickets"] = reset_block.get(
+            "applicable_available_count", 0
+        )
+    elif "available_resets" in raw_data:
+        parsed["reset_tickets"] = raw_data["available_resets"]
+
+    def _parse_window_obj(w_dict, default_title="Лимит"):
+        if not isinstance(w_dict, dict):
+            return None
+        sec = w_dict.get("limit_window_seconds", 0)
+        used = w_dict.get("used_percent", 0)
+        left = max(0, 100 - used)
+        reset_at = w_dict.get("reset_at")
+        reset_after = w_dict.get("reset_after_seconds")
+
+        if sec <= 0:
+            title = default_title
+        elif sec <= 18000:
+            title = f"{default_title} (Сессия {round(sec/3600, 1)}ч)"
+        elif sec <= 86400:
+            title = f"{default_title} (24ч)"
+        elif sec == 604800:
+            title = f"{default_title} (7д)"
+        else:
+            title = f"{default_title} ({round(sec/86400)}д)"
+
+        reset_str = "—"
+        if reset_at:
+            try:
+                reset_str = datetime.fromtimestamp(reset_at).strftime(
+                    "%d.%m %H:%M"
+                )
+            except Exception:
+                pass
+        elif reset_after is not None:
+            hrs = reset_after // 3600
+            mins = (reset_after % 3600) // 60
+            reset_str = f"через {hrs}ч {mins}м"
+
+        return {
+            "title": title,
+            "used": used,
+            "left": left,
+            "reset_str": reset_str,
+        }
+
+    rate_limit = raw_data.get("rate_limit", {})
+    if isinstance(rate_limit, dict):
+        parsed["limit_reached"] = rate_limit.get("limit_reached", False)
+        for key in ["primary_window", "secondary_window"]:
+            w_obj = rate_limit.get(key)
+            if w_obj:
+                res = _parse_window_obj(
+                    w_obj,
+                    (
+                        "Основной лимит"
+                        if key == "primary_window"
+                        else "Доп. окно"
+                    ),
+                )
+                if res:
+                    parsed["windows"].append(res)
+
+    return parsed
+
+
+# ================= КАСТОМНЫЕ VERCEL КОМПОНЕНТЫ =================
+class VercelProgressBar(tk.Canvas):
+
+    def __init__(
+        self, parent, width=160, height=6, bg=THEME["bg_subtle"], **kwargs
+    ):
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            bg=bg,
+            highlightthickness=0,
+            **kwargs,
+        )
+        self.w = width
+        self.h = height
+        self.val = 0
+
+    def set_value(self, percent: float, color=THEME["accent_green"]):
+        self.val = max(0.0, min(100.0, percent))
+        self.delete("all")
+        self.create_rectangle(
+            0,
+            0,
+            self.w,
+            self.h,
+            fill=THEME["bg_hover"],
+            outline="",
+        )
+        fill_w = int((self.val / 100.0) * self.w)
+        if fill_w > 0:
+            self.create_rectangle(
+                0, 0, fill_w, self.h, fill=color, outline=""
+            )
+
+
+# ================= ТЕМНЫЙ ДИАЛОГ ВВОДА ИМЕНИ =================
+class VercelPromptDialog(tk.Toplevel):
+
+    def __init__(
+        self,
+        parent,
+        title: str,
+        prompt: str,
+        initial_value: str = "",
+    ):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("380x170")
+        self.resizable(False, False)
+        self.configure(bg=THEME["bg_root"])
+        self.transient(parent)
+        self.grab_set()
+
+        self.result = None
+        apply_dark_titlebar(self)
+
+        container = tk.Frame(self, bg=THEME["bg_root"], padx=18, pady=16)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            container,
+            text=prompt,
+            font=("Segoe UI", 9, "bold"),
+            bg=THEME["bg_root"],
+            fg=THEME["text_primary"],
+        ).pack(anchor="w", pady=(0, 10))
+
+        border_ent = tk.Frame(
+            container, bg=THEME["border_subtle"], padx=1, pady=1
+        )
+        border_ent.pack(fill=tk.X, pady=(0, 16))
+
+        self.entry = tk.Entry(
+            border_ent,
+            font=("Segoe UI", 10),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_primary"],
+            insertbackground=THEME["accent_white"],
+            bd=0,
+        )
+        self.entry.pack(fill=tk.X, ipady=5, padx=6)
+        self.entry.insert(0, initial_value)
+        self.entry.select_range(0, tk.END)
+        self.entry.focus_set()
+
+        btn_row = tk.Frame(container, bg=THEME["bg_root"])
+        btn_row.pack(fill=tk.X)
+
+        tk.Button(
+            btn_row,
+            text="OK",
+            command=self._on_ok,
+            bg=THEME["accent_white"],
+            fg="#000000",
+            activebackground="#d4d4d4",
+            activeforeground="#000000",
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=14,
+            pady=4,
+            relief="flat",
+            cursor="hand2",
+        ).pack(side=tk.RIGHT, padx=(6, 0))
+
+        tk.Button(
+            btn_row,
+            text="Cancel",
+            command=self.destroy,
+            bg=THEME["bg_subtle"],
+            fg=THEME["text_secondary"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8),
+            bd=0,
+            padx=12,
+            pady=4,
+            relief="flat",
+            cursor="hand2",
+        ).pack(side=tk.RIGHT)
+
+        self.bind("<Return>", lambda e: self._on_ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        self.wait_window(self)
+
+    def _on_ok(self):
+        val = self.entry.get().strip()
+        if val:
+            self.result = val
+            self.destroy()
+
+
+# ================= МОДАЛЬНОЕ ОКНО ВСТАВКИ JSON =================
+class PasteJsonDialog(tk.Toplevel):
+
+    def __init__(self, parent, profiles_dir: Path, on_success_callback):
+        super().__init__(parent)
+        self.title("Paste auth.json")
+        self.geometry("620x480")
+        self.resizable(False, False)
+        self.configure(bg=THEME["bg_root"])
+        self.transient(parent)
+        self.grab_set()
+
+        self.profiles_dir = profiles_dir
+        self.on_success = on_success_callback
+        self.detected_default_name = ""
+
+        apply_dark_titlebar(self)
+        self._build_ui()
+        self._bind_keyboard_shortcuts()
+
+        self.after(50, lambda: self.txt_json.focus_set())
+
+    def _build_ui(self):
+        container = tk.Frame(self, bg=THEME["bg_root"], padx=18, pady=16)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        top_row = tk.Frame(container, bg=THEME["bg_root"])
+        top_row.pack(side=tk.TOP, fill=tk.X, pady=(0, 8))
+
+        tk.Label(
+            top_row,
+            text="Paste auth.json content (Ctrl+V):",
+            font=("Segoe UI", 10, "bold"),
+            bg=THEME["bg_root"],
+            fg=THEME["text_primary"],
+        ).pack(side=tk.LEFT)
+
+        btn_paste_clip = tk.Button(
+            top_row,
+            text="📋 Paste from Clipboard",
+            command=self._paste_from_clipboard,
+            bg=THEME["bg_subtle"],
+            fg=THEME["accent_white"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8),
+            bd=0,
+            padx=10,
+            pady=4,
+            relief="flat",
+            cursor="hand2",
+        )
+        btn_paste_clip.pack(side=tk.RIGHT)
+
+        bot_row = tk.Frame(container, bg=THEME["bg_root"])
+        bot_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
+
+        btn_save = tk.Button(
+            bot_row,
+            text="▲  Save Profile",
+            command=self._save_profile_flow,
+            bg=THEME["accent_white"],
+            fg="#000000",
+            activebackground="#d4d4d4",
+            activeforeground="#000000",
+            font=("Segoe UI", 9, "bold"),
+            bd=0,
+            padx=18,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        btn_save.pack(side=tk.RIGHT, padx=(8, 0))
+
+        btn_cancel = tk.Button(
+            bot_row,
+            text="Cancel",
+            command=self.destroy,
+            bg=THEME["bg_subtle"],
+            fg=THEME["text_secondary"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8),
+            bd=0,
+            padx=14,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        btn_cancel.pack(side=tk.RIGHT)
+
+        self.lbl_detect_status = tk.Label(
+            container,
+            text="Waiting for input... (Press Ctrl+V to paste)",
+            font=("Segoe UI", 8),
+            bg=THEME["bg_root"],
+            fg=THEME["text_muted"],
+        )
+        self.lbl_detect_status.pack(side=tk.BOTTOM, anchor="w", pady=(8, 0))
+
+        border_txt = tk.Frame(
+            container, bg=THEME["border_subtle"], padx=1, pady=1
+        )
+        border_txt.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.txt_json = tk.Text(
+            border_txt,
+            font=("Consolas", 9),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_primary"],
+            insertbackground=THEME["accent_white"],
+            bd=0,
+            padx=10,
+            pady=10,
+            wrap=tk.WORD,
+        )
+        self.txt_json.pack(fill=tk.BOTH, expand=True)
+
+    def _bind_keyboard_shortcuts(self):
+        self.txt_json.bind("<KeyRelease>", self._on_text_change)
+        self.txt_json.bind("<<Paste>>", lambda e: self.after(10, self._on_text_change))
+        self.bind("<Control-v>", lambda e: self._on_hotkey_paste())
+        self.bind("<Control-V>", lambda e: self._on_hotkey_paste())
+        self.bind("<Control-a>", lambda e: self._select_all())
+        self.bind("<Control-A>", lambda e: self._select_all())
+        self.bind("<Control-KeyPress>", self._on_ctrl_keypress)
+
+    def _on_ctrl_keypress(self, event):
+        if event.keycode == 86 or event.keysym.lower() in ("v", "cyrillic_em"):
+            self._on_hotkey_paste()
+            return "break"
+        elif event.keycode == 65 or event.keysym.lower() in ("a", "cyrillic_ef"):
+            self._select_all()
+            return "break"
+
+    def _select_all(self):
+        self.txt_json.tag_add(tk.SEL, "1.0", tk.END)
+        self.txt_json.mark_set(tk.INSERT, "1.0")
+        self.txt_json.see(tk.INSERT)
+        return "break"
+
+    def _on_hotkey_paste(self):
+        self._paste_from_clipboard()
+        return "break"
+
+    def _paste_from_clipboard(self):
+        try:
+            content = self.clipboard_get().strip()
+            if content:
+                self.txt_json.delete("1.0", tk.END)
+                self.txt_json.insert(tk.END, content)
+                self._on_text_change()
+        except Exception:
+            messagebox.showwarning(
+                "Clipboard", "Clipboard is empty or does not contain text."
+            )
+
+    def _on_text_change(self, event=None):
+        raw = self.txt_json.get("1.0", tk.END).strip()
+        if not raw:
+            self.lbl_detect_status.config(
+                text="Waiting for input... (Press Ctrl+V to paste)",
+                fg=THEME["text_muted"],
+            )
+            return
+
+        try:
+            data = json.loads(raw)
+            info = extract_auth_info_from_dict(data)
+
+            email_str = info["email"]
+            plan_str = info["plan"]
+
+            if email_str != "—":
+                self.lbl_detect_status.config(
+                    text=f"✓ Detected: {email_str} [{plan_str}]",
+                    fg=THEME["badge_plus_fg"],
+                )
+                self.detected_default_name = email_str.split("@")[0]
+            else:
+                self.lbl_detect_status.config(
+                    text="✓ Valid JSON format", fg=THEME["text_secondary"]
+                )
+                self.detected_default_name = "custom_account"
+        except Exception:
+            self.lbl_detect_status.config(
+                text="✕ Invalid JSON format", fg=THEME["accent_red"]
+            )
+
+    def _save_profile_flow(self):
+        raw = self.txt_json.get("1.0", tk.END).strip()
+        if not raw:
+            messagebox.showerror("Error", "Please paste JSON content first.")
+            return
+
+        try:
+            data = json.loads(raw)
+        except Exception as e:
+            messagebox.showerror(
+                "Invalid JSON", f"Could not parse JSON content:\n{e}"
+            )
+            return
+
+        prompt = VercelPromptDialog(
+            self,
+            title="Profile Name",
+            prompt="Enter name for this profile:",
+            initial_value=self.detected_default_name or "account",
+        )
+
+        name = prompt.result
+        if not name:
+            return
+
+        name = name.replace("/", "_").replace("\\", "_").replace(":", "_")
+        dest = self.profiles_dir / f"{name}.json"
+
+        if dest.exists():
+            if not messagebox.askyesno(
+                "Overwrite", f"Profile '{name}' already exists. Overwrite?"
+            ):
+                return
+
+        try:
+            with open(dest, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            self.on_success(name)
+            self.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save profile:\n{e}")
+
+
+# ================= ГЛАВНОЕ ОКНО ПРИЛОЖЕНИЯ =================
+class CodexVercelSwitcher(tk.Tk):
+
+    def __init__(self):
+        super().__init__()
+
+        self.title("Codex / ChatGPT Profile Manager")
+        self.geometry("880x740")
+        self.minsize(800, 640)
+        self.configure(bg=THEME["bg_root"])
+
+        apply_dark_titlebar(self)
+
+        self.codex_dir = Path.home() / ".codex"
+        self.auth_file = self.codex_dir / "auth.json"
+        self.profiles_dir = self.codex_dir / "profiles"
+        self.order_file = self.codex_dir / "profiles_order.json"
+
+        self.codex_dir.mkdir(parents=True, exist_ok=True)
+        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        self._dnd_item = None
+
+        self._setup_styles()
+        self._build_ui()
+        self.refresh_profiles()
+
+        # Автоматический запуск опроса всех квот при старте приложения
+        self.after(150, self.fetch_all_accounts_async)
+
+    def _setup_styles(self):
+        style = ttk.Style(self)
+        style.theme_use("clam")
+
+        style.configure(
+            "Treeview",
+            background=THEME["bg_surface"],
+            foreground=THEME["text_primary"],
+            fieldbackground=THEME["bg_surface"],
+            borderwidth=0,
+            font=("Segoe UI", 9),
+            rowheight=32,
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", THEME["bg_hover"])],
+            foreground=[("selected", THEME["accent_white"])],
+        )
+
+        style.configure(
+            "Treeview.Heading",
+            background=THEME["bg_subtle"],
+            foreground=THEME["text_secondary"],
+            borderwidth=0,
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            padding=(6, 4),
+        )
+        style.map("Treeview.Heading", background=[("active", THEME["bg_hover"])])
+
+        style.configure(
+            "Vertical.TScrollbar",
+            background=THEME["bg_subtle"],
+            troughcolor=THEME["bg_root"],
+            borderwidth=0,
+            arrowsize=10,
+        )
+
+    def _build_ui(self):
+        container = tk.Frame(self, bg=THEME["bg_root"], padx=20, pady=16)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        # 1. HEADER
+        header = tk.Frame(container, bg=THEME["bg_root"])
+        header.pack(fill=tk.X, pady=(0, 16))
+
+        logo_box = tk.Frame(header, bg=THEME["bg_root"])
+        logo_box.pack(side=tk.LEFT)
+
+        tk.Label(
+            logo_box,
+            text="▲",
+            font=("Segoe UI", 14, "bold"),
+            bg=THEME["bg_root"],
+            fg=THEME["accent_white"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Label(
+            logo_box,
+            text="CODEX",
+            font=("Segoe UI", 12, "bold"),
+            bg=THEME["bg_root"],
+            fg=THEME["accent_white"],
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            logo_box,
+            text=" / ACCOUNT SWITCHER",
+            font=("Segoe UI", 11),
+            bg=THEME["bg_root"],
+            fg=THEME["text_muted"],
+        ).pack(side=tk.LEFT)
+
+        tab_box = tk.Frame(header, bg=THEME["bg_subtle"], padx=3, pady=3)
+        tab_box.pack(side=tk.RIGHT)
+
+        self.btn_tab_manage = tk.Button(
+            tab_box,
+            text="Overview",
+            command=lambda: self._set_active_tab(0),
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=12,
+            pady=4,
+            relief="flat",
+            cursor="hand2",
+        )
+        self.btn_tab_manage.pack(side=tk.LEFT)
+
+        self.btn_tab_raw = tk.Button(
+            tab_box,
+            text="Live API JSON",
+            command=lambda: self._set_active_tab(1),
+            bg=THEME["bg_subtle"],
+            fg=THEME["text_secondary"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=12,
+            pady=4,
+            relief="flat",
+            cursor="hand2",
+        )
+        self.btn_tab_raw.pack(side=tk.LEFT)
+
+        # 2. TAB CONTAINER
+        self.frames_container = tk.Frame(container, bg=THEME["bg_root"])
+        self.frames_container.pack(fill=tk.BOTH, expand=True)
+
+        self.frame_overview = tk.Frame(
+            self.frames_container, bg=THEME["bg_root"]
+        )
+        self.frame_raw = tk.Frame(
+            self.frames_container, bg=THEME["bg_root"]
+        )
+
+        self.frame_overview.pack(fill=tk.BOTH, expand=True)
+
+        self._build_overview_tab()
+        self._build_raw_tab()
+
+    def _set_active_tab(self, idx: int):
+        if idx == 0:
+            self.frame_raw.pack_forget()
+            self.frame_overview.pack(fill=tk.BOTH, expand=True)
+            self.btn_tab_manage.configure(
+                bg=THEME["bg_hover"], fg=THEME["text_primary"]
+            )
+            self.btn_tab_raw.configure(
+                bg=THEME["bg_subtle"], fg=THEME["text_secondary"]
+            )
+        else:
+            self.frame_overview.pack_forget()
+            self.frame_raw.pack(fill=tk.BOTH, expand=True)
+            self.btn_tab_raw.configure(
+                bg=THEME["bg_hover"], fg=THEME["text_primary"]
+            )
+            self.btn_tab_manage.configure(
+                bg=THEME["bg_subtle"], fg=THEME["text_secondary"]
+            )
+
+    def _build_overview_tab(self):
+        card_border = tk.Frame(
+            self.frame_overview, bg=THEME["border_subtle"], padx=1, pady=1
+        )
+        card_border.pack(fill=tk.X, pady=(0, 14))
+
+        self.card = tk.Frame(card_border, bg=THEME["bg_surface"], padx=16, pady=14)
+        self.card.pack(fill=tk.X)
+
+        # 1-я строка
+        r1 = tk.Frame(self.card, bg=THEME["bg_surface"])
+        r1.pack(fill=tk.X, pady=(0, 4))
+
+        self.lbl_active_name = tk.Label(
+            r1,
+            text="Active Profile: —",
+            font=("Segoe UI", 12, "bold"),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_primary"],
+        )
+        self.lbl_active_name.pack(side=tk.LEFT)
+
+        self.badge_box = tk.Frame(r1, bg=THEME["bg_surface"])
+        self.badge_box.pack(side=tk.RIGHT)
+
+        self.lbl_badge_plan = tk.Label(
+            self.badge_box,
+            text="PLUS",
+            font=("Segoe UI", 8, "bold"),
+            bg=THEME["badge_plus_bg"],
+            fg=THEME["badge_plus_fg"],
+            padx=8,
+            pady=2,
+        )
+        self.lbl_badge_plan.pack(side=tk.LEFT, padx=3)
+
+        self.lbl_badge_ticket = tk.Label(
+            self.badge_box,
+            text="🎟️ RESETS: —",
+            font=("Segoe UI", 8, "bold"),
+            bg=THEME["badge_ticket_bg"],
+            fg=THEME["badge_ticket_fg"],
+            padx=8,
+            pady=2,
+        )
+        self.lbl_badge_ticket.pack(side=tk.LEFT, padx=3)
+
+        # 2-я строка
+        self.lbl_email_sub = tk.Label(
+            self.card,
+            text="email@example.com  •  Valid until: —",
+            font=("Segoe UI", 9),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_secondary"],
+        )
+        self.lbl_email_sub.pack(anchor="w", pady=(0, 10))
+
+        # 3-я строка: Dynamic Progress Bars
+        self.limits_container = tk.Frame(self.card, bg=THEME["bg_surface"])
+        self.limits_container.pack(fill=tk.X, pady=(0, 6))
+
+        self.lbl_initial_notice = tk.Label(
+            self.limits_container,
+            text="Fetching live quotas from OpenAI...",
+            font=("Segoe UI", 9),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_muted"],
+        )
+        self.lbl_initial_notice.pack(anchor="w")
+
+        # 4-я строка
+        r4 = tk.Frame(self.card, bg=THEME["bg_surface"])
+        r4.pack(fill=tk.X, pady=(4, 0))
+
+        self.lbl_credits_info = tk.Label(
+            r4,
+            text="Credits: $0.00",
+            font=("Segoe UI", 8),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_muted"],
+        )
+        self.lbl_credits_info.pack(side=tk.LEFT)
+
+        # ТАБЛИЦА ВСЕХ ПРОФИЛЕЙ
+        tbl_border = tk.Frame(
+            self.frame_overview, bg=THEME["border_subtle"], padx=1, pady=1
+        )
+        tbl_border.pack(fill=tk.BOTH, expand=True, pady=(0, 14))
+
+        tbl_bg = tk.Frame(tbl_border, bg=THEME["bg_surface"])
+        tbl_bg.pack(fill=tk.BOTH, expand=True)
+
+        cols = ("name", "email", "plan", "quota", "tickets", "status")
+        self.tree = ttk.Treeview(
+            tbl_bg, columns=cols, show="headings", selectmode="browse"
+        )
+
+        self.tree.heading("name", text="PROFILE")
+        self.tree.heading("email", text="EMAIL / USER")
+        self.tree.heading("plan", text="PLAN")
+        self.tree.heading("quota", text="7D QUOTA")
+        self.tree.heading("tickets", text="RESETS")
+        self.tree.heading("status", text="STATUS")
+
+        self.tree.column("name", width=120, anchor="w")
+        self.tree.column("email", width=240, anchor="w")
+        self.tree.column("plan", width=75, anchor="center")
+        self.tree.column("quota", width=110, anchor="center")
+        self.tree.column("tickets", width=85, anchor="center")
+        self.tree.column("status", width=90, anchor="center")
+
+        scroll = ttk.Scrollbar(
+            tbl_bg,
+            orient=tk.VERTICAL,
+            command=self.tree.yview,
+            style="Vertical.TScrollbar",
+        )
+        self.tree.configure(yscrollcommand=scroll.set)
+
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Привязка перетаскивания (Drag-and-Drop) строк
+        self.tree.bind("<ButtonPress-1>", self._on_dnd_start)
+        self.tree.bind("<B1-Motion>", self._on_dnd_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_dnd_stop)
+        self.tree.bind("<Double-Button-1>", lambda e: self.switch_profile())
+
+        # ПАНЕЛЬ УПРАВЛЕНИЯ
+        actions_bar = tk.Frame(self.frame_overview, bg=THEME["bg_root"])
+        actions_bar.pack(fill=tk.X)
+
+        self.var_restart = tk.BooleanVar(value=True)
+        cb = tk.Checkbutton(
+            actions_bar,
+            text="Auto-restart ChatGPT.exe on switch",
+            variable=self.var_restart,
+            bg=THEME["bg_root"],
+            fg=THEME["text_secondary"],
+            activebackground=THEME["bg_root"],
+            activeforeground=THEME["text_primary"],
+            selectcolor=THEME["bg_surface"],
+            font=("Segoe UI", 8),
+            bd=0,
+            highlightthickness=0,
+        )
+        cb.pack(anchor="w", pady=(0, 8))
+
+        btns_row = tk.Frame(actions_bar, bg=THEME["bg_root"])
+        btns_row.pack(fill=tk.X)
+
+        self.btn_activate = tk.Button(
+            btns_row,
+            text="▲  Activate Account",
+            command=self.switch_profile,
+            bg=THEME["accent_white"],
+            fg="#000000",
+            activebackground="#d4d4d4",
+            activeforeground="#000000",
+            font=("Segoe UI", 9, "bold"),
+            bd=0,
+            padx=15,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        self.btn_activate.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.btn_check_all = tk.Button(
+            btns_row,
+            text="🔄  Check All Quotas",
+            command=self.fetch_all_accounts_async,
+            bg=THEME["bg_hover"],
+            fg=THEME["accent_white"],
+            activebackground=THEME["border_active"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=12,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        self.btn_check_all.pack(side=tk.LEFT, padx=3)
+
+        btn_paste = tk.Button(
+            btns_row,
+            text="+ Paste JSON",
+            command=self.open_paste_dialog,
+            bg=THEME["bg_subtle"],
+            fg=THEME["badge_plus_fg"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=11,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        btn_paste.pack(side=tk.LEFT, padx=3)
+
+        sec_btns = [
+            ("Save Active", self.save_current_auth),
+            ("Import File", self.import_profile),
+            ("Rename", self.rename_profile),
+            ("Delete", self.delete_profile),
+        ]
+
+        for text, cmd in sec_btns:
+            b = tk.Button(
+                btns_row,
+                text=text,
+                command=cmd,
+                bg=THEME["bg_subtle"],
+                fg=THEME["text_primary"],
+                activebackground=THEME["bg_hover"],
+                activeforeground=THEME["accent_white"],
+                font=("Segoe UI", 8),
+                bd=0,
+                padx=9,
+                pady=7,
+                relief="flat",
+                cursor="hand2",
+            )
+            b.pack(side=tk.LEFT, padx=3)
+
+    def _build_raw_tab(self):
+        border = tk.Frame(
+            self.frame_raw, bg=THEME["border_subtle"], padx=1, pady=1
+        )
+        border.pack(fill=tk.BOTH, expand=True)
+
+        box = tk.Frame(border, bg=THEME["bg_surface"], padx=12, pady=12)
+        box.pack(fill=tk.BOTH, expand=True)
+
+        top_r = tk.Frame(box, bg=THEME["bg_surface"])
+        top_r.pack(fill=tk.X, pady=(0, 8))
+
+        tk.Label(
+            top_r,
+            text="ENDPOINT: https://chatgpt.com/backend-api/wham/usage",
+            font=("Consolas", 9),
+            bg=THEME["bg_surface"],
+            fg=THEME["text_muted"],
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            top_r,
+            text="Copy JSON",
+            command=self._copy_raw_json,
+            bg=THEME["bg_subtle"],
+            fg=THEME["text_primary"],
+            activebackground=THEME["bg_hover"],
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8),
+            bd=0,
+            padx=10,
+            pady=3,
+            relief="flat",
+            cursor="hand2",
+        ).pack(side=tk.RIGHT)
+
+        txt_frame = tk.Frame(box, bg=THEME["bg_surface"])
+        txt_frame.pack(fill=tk.BOTH, expand=True)
+
+        scroll = ttk.Scrollbar(
+            txt_frame, orient=tk.VERTICAL, style="Vertical.TScrollbar"
+        )
+        self.txt_raw = tk.Text(
+            txt_frame,
+            font=("Consolas", 10),
+            wrap=tk.NONE,
+            yscrollcommand=scroll.set,
+            bg=THEME["bg_root"],
+            fg=THEME["text_primary"],
+            insertbackground=THEME["accent_white"],
+            bd=0,
+            padx=10,
+            pady=10,
+        )
+        scroll.config(command=self.txt_raw.yview)
+
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.txt_raw.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.txt_raw.tag_config("key", foreground="#93c5fd")
+        self.txt_raw.tag_config("str", foreground="#86efac")
+        self.txt_raw.tag_config("num", foreground="#fca5a5")
+        self.txt_raw.tag_config("bool", foreground="#c084fc")
+
+    def _copy_raw_json(self):
+        text = self.txt_raw.get("1.0", tk.END).strip()
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            messagebox.showinfo("Copied", "JSON response copied to clipboard!")
+
+    def _apply_json_highlight(self, json_str: str):
+        self.txt_raw.delete("1.0", tk.END)
+        self.txt_raw.insert(tk.END, json_str)
+
+        content = json_str
+        for match in re.finditer(r'"(.*?)"(?=\s*:)', content):
+            start = f"1.0 + {match.start()} chars"
+            end = f"1.0 + {match.end()} chars"
+            self.txt_raw.tag_add("key", start, end)
+
+        for match in re.finditer(r':\s*"([^"]*)"', content):
+            start = f"1.0 + {match.start() + 2} chars"
+            end = f"1.0 + {match.end()} chars"
+            self.txt_raw.tag_add("str", start, end)
+
+        for match in re.finditer(r'\b(true|false|null)\b', content):
+            start = f"1.0 + {match.start()} chars"
+            end = f"1.0 + {match.end()} chars"
+            self.txt_raw.tag_add("bool", start, end)
+
+        for match in re.finditer(r'\b\d+(\.\d+)?\b', content):
+            start = f"1.0 + {match.start()} chars"
+            end = f"1.0 + {match.end()} chars"
+            self.txt_raw.tag_add("num", start, end)
+
+    def _get_file_hash(self, path: Path) -> str:
+        if not path.exists():
+            return ""
+        try:
+            with open(path, "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            return ""
+
+    # ================= УПРАВЛЕНИЕ ПОРЯДКОМ И DRAG-AND-DROP =================
+    def _load_ordered_profiles(self) -> list:
+        disk_files = {p.stem: p for p in self.profiles_dir.glob("*.json")}
+        ordered = []
+
+        if self.order_file.exists():
+            try:
+                with open(self.order_file, "r", encoding="utf-8") as f:
+                    saved_order = json.load(f)
+                for name in saved_order:
+                    if name in disk_files:
+                        ordered.append(disk_files.pop(name))
+            except Exception:
+                pass
+
+        for p in disk_files.values():
+            ordered.append(p)
+
+        return ordered
+
+    def _save_profiles_order(self):
+        current_order = list(self.tree.get_children(""))
+        try:
+            with open(self.order_file, "w", encoding="utf-8") as f:
+                json.dump(current_order, f, indent=2)
+        except Exception:
+            pass
+
+    def _on_dnd_start(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self._dnd_item = item
+
+    def _on_dnd_motion(self, event):
+        if not self._dnd_item:
+            return
+        target = self.tree.identify_row(event.y)
+        if target and target != self._dnd_item:
+            target_idx = self.tree.index(target)
+            self.tree.move(self._dnd_item, "", target_idx)
+
+    def _on_dnd_stop(self, event):
+        if self._dnd_item:
+            self._save_profiles_order()
+            self._dnd_item = None
+
+    def refresh_profiles(self):
+        # Сохраняем уже загруженные значения квот в памяти, чтобы они не сбрасывались
+        existing_values = {}
+        for item in self.tree.get_children():
+            existing_values[item] = self.tree.item(item, "values")
+
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        current_hash = self._get_file_hash(self.auth_file)
+        current_info = extract_auth_info(self.auth_file)
+
+        matched_profile = None
+        ordered_files = self._load_ordered_profiles()
+
+        for p_file in ordered_files:
+            p_name = p_file.stem
+            p_hash = self._get_file_hash(p_file)
+            p_info = extract_auth_info(p_file)
+
+            is_active = current_hash and p_hash == current_hash
+            status_text = "● ACTIVE" if is_active else "—"
+            if is_active:
+                matched_profile = p_name
+
+            # Подставляем сохраненные квоты, если они уже были получены
+            prev = existing_values.get(p_name)
+            quota_val = prev[3] if prev and len(prev) > 3 else "—"
+            ticket_val = prev[4] if prev and len(prev) > 4 else "—"
+
+            self.tree.insert(
+                "",
+                tk.END,
+                iid=p_name,
+                values=(
+                    p_name,
+                    p_info["email"],
+                    p_info["plan"],
+                    quota_val,
+                    ticket_val,
+                    status_text,
+                ),
+            )
+
+        if matched_profile:
+            self.lbl_active_name.config(text=f"Active Profile: {matched_profile}")
+        elif self.auth_file.exists():
+            self.lbl_active_name.config(text="Active Profile: Custom / Unsaved")
+        else:
+            self.lbl_active_name.config(text="Active Profile: No auth.json")
+
+        self.lbl_badge_plan.config(text=current_info.get("plan", "FREE"))
+        self.lbl_email_sub.config(
+            text=f"{current_info['email']}  •  Expires: {current_info['expires']}"
+        )
+
+    def open_paste_dialog(self):
+        PasteJsonDialog(self, self.profiles_dir, self._on_pasted_profile_saved)
+
+    def _on_pasted_profile_saved(self, profile_name: str):
+        self.refresh_profiles()
+        self._save_profiles_order()
+        self.fetch_all_accounts_async()
+
+    # ================= ОПРОС ВСЕХ АККАУНТОВ =================
+    def fetch_all_accounts_async(self):
+        self.btn_check_all.config(state=tk.DISABLED, text="⏳ Updating...")
+
+        def _worker():
+            raw_active = fetch_api_usage_raw(self.auth_file)
+            parsed_active = parse_dynamic_usage(raw_active)
+            self.after(
+                0, lambda: self._apply_active_limits_ui(raw_active, parsed_active)
+            )
+
+            ordered_files = self._load_ordered_profiles()
+            total = len(ordered_files)
+
+            for idx, p_file in enumerate(ordered_files, start=1):
+                self.after(
+                    0,
+                    lambda i=idx, t=total: self.btn_check_all.config(
+                        text=f"⏳ {i}/{t}..."
+                    ),
+                )
+                p_name = p_file.stem
+                raw = fetch_api_usage_raw(p_file)
+                parsed = parse_dynamic_usage(raw)
+
+                quota_7d = "—"
+                tickets_str = "—"
+
+                if "error" not in parsed:
+                    tickets_str = str(parsed.get("reset_tickets", 0))
+                    for w in parsed["windows"]:
+                        if "7д" in w["title"] or "Основной" in w["title"]:
+                            quota_7d = f"{w['left']}%"
+
+                def _upd_row(n=p_name, q=quota_7d, t=tickets_str):
+                    if self.tree.exists(n):
+                        vals = list(self.tree.item(n, "values"))
+                        vals[3] = q
+                        vals[4] = t
+                        self.tree.item(n, values=vals)
+
+                self.after(0, _upd_row)
+                time.sleep(0.2)
+
+            self.after(
+                0,
+                lambda: self.btn_check_all.config(
+                    state=tk.NORMAL, text="🔄  Check All Quotas"
+                ),
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_active_limits_ui(self, raw_data: dict, parsed: dict):
+        formatted_json = json.dumps(raw_data, indent=2, ensure_ascii=False)
+        self._apply_json_highlight(formatted_json)
+
+        for widget in self.limits_container.winfo_children():
+            widget.destroy()
+
+        if "error" in parsed:
+            tk.Label(
+                self.limits_container,
+                text=f"API Status: {parsed['error']}",
+                font=("Segoe UI", 9),
+                bg=THEME["bg_surface"],
+                fg=THEME["accent_red"],
+            ).pack(anchor="w")
+            return
+
+        if parsed["windows"]:
+            for w in parsed["windows"]:
+                row = tk.Frame(self.limits_container, bg=THEME["bg_surface"])
+                row.pack(fill=tk.X, pady=3)
+
+                info_text = f"{w['title']}: {w['left']}% remaining  (Resets {w['reset_str']})"
+                tk.Label(
+                    row,
+                    text=info_text,
+                    font=("Segoe UI", 9),
+                    bg=THEME["bg_surface"],
+                    fg=THEME["text_primary"],
+                ).pack(side=tk.LEFT)
+
+                pb = VercelProgressBar(row, width=140, height=6)
+                pb.pack(side=tk.RIGHT, padx=4)
+                pb.set_value(w["left"], color=THEME["accent_green"])
+        else:
+            tk.Label(
+                self.limits_container,
+                text="No active limits reported by server",
+                font=("Segoe UI", 9),
+                bg=THEME["bg_surface"],
+                fg=THEME["text_muted"],
+            ).pack(anchor="w")
+
+        tickets = parsed.get("reset_tickets", 0)
+        self.lbl_badge_ticket.config(text=f"🎟️ {tickets} RESETS")
+        if tickets > 0:
+            self.lbl_badge_ticket.config(
+                bg=THEME["badge_ticket_bg"], fg=THEME["badge_ticket_fg"]
+            )
+        else:
+            self.lbl_badge_ticket.config(
+                bg=THEME["bg_subtle"], fg=THEME["text_secondary"]
+            )
+
+        cr = parsed.get("credits", "0")
+        self.lbl_credits_info.config(text=f"Additional Credits: ${cr}")
+
+    # ================= ПЕРЕКЛЮЧЕНИЕ АККАУНТОВ =================
+    def _restart_codex_app(self):
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            for proc in [
+                "ChatGPT.exe",
+                "Codex.exe",
+                "OpenAI.Codex.exe",
+                "OpenAI.Codex",
+            ]:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", proc],
+                        startupinfo=startupinfo,
+                        capture_output=True,
+                    )
+                except Exception:
+                    pass
+
+            time.sleep(0.8)
+
+            ps_script = (
+                "$app = Get-StartApps | Where-Object { "
+                "$_.AppID -like '*OpenAI.Codex*' -or $_.AppID -like '*2p2nqsd0c76g0*' -or $_.AppID -like '*ChatGPT*' "
+                "} | Select-Object -First 1; "
+                "if ($app) { Start-Process ('shell:AppsFolder\\' + $app.AppID) } "
+                "else { Start-Process 'shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App' }"
+            )
+
+            try:
+                subprocess.Popen(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-Command",
+                        ps_script,
+                    ],
+                    creationflags=getattr(
+                        subprocess, "CREATE_NO_WINDOW", 0x08000000
+                    ),
+                )
+            except Exception:
+                os.system(
+                    'explorer.exe "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"'
+                )
+        else:
+            subprocess.run(["pkill", "-f", "ChatGPT"], capture_output=True)
+            subprocess.run(["pkill", "-f", "Codex"], capture_output=True)
+
+    def switch_profile(self):
+        """Мгновенное локальное переключение профиля без лишних повторных сетевых запросов."""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Notice", "Select a profile from the table.")
+            return
+
+        profile_name = selected[0]
+        src = self.profiles_dir / f"{profile_name}.json"
+
+        if not src.exists():
+            messagebox.showerror("Error", f"Profile {src.name} not found.")
+            return
+
+        try:
+            if self.auth_file.exists():
+                shutil.copy2(self.auth_file, self.codex_dir / "auth.json.bak")
+
+            shutil.copy2(src, self.auth_file)
+            self.refresh_profiles()
+
+            if self.var_restart.get():
+                self._restart_codex_app()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def save_current_auth(self):
+        if not self.auth_file.exists():
+            messagebox.showerror("Error", "auth.json does not exist.")
+            return
+
+        info = extract_auth_info(self.auth_file)
+        default_name = (
+            info["email"].split("@")[0] if info["email"] != "—" else "account"
+        )
+
+        prompt = VercelPromptDialog(
+            self,
+            title="Save Profile",
+            prompt="Enter profile name:",
+            initial_value=default_name,
+        )
+
+        name = prompt.result
+        if not name:
+            return
+
+        name = name.strip().replace("/", "_").replace("\\", "_")
+        dest = self.profiles_dir / f"{name}.json"
+
+        if dest.exists() and not messagebox.askyesno(
+            "Overwrite", f"Profile '{name}' already exists. Overwrite?"
+        ):
+            return
+
+        try:
+            shutil.copy2(self.auth_file, dest)
+            self.refresh_profiles()
+            self._save_profiles_order()
+            self.fetch_all_accounts_async()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def import_profile(self):
+        file_path = filedialog.askopenfilename(
+            title="Select auth.json",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+        )
+        if not file_path:
+            return
+
+        info = extract_auth_info(Path(file_path))
+        default_name = (
+            info["email"].split("@")[0]
+            if info["email"] != "—"
+            else Path(file_path).stem
+        )
+
+        prompt = VercelPromptDialog(
+            self,
+            title="Import Profile",
+            prompt="Enter profile name:",
+            initial_value=default_name,
+        )
+
+        name = prompt.result
+        if not name:
+            return
+
+        name = name.strip().replace("/", "_").replace("\\", "_")
+        dest = self.profiles_dir / f"{name}.json"
+
+        try:
+            shutil.copy2(file_path, dest)
+            self.refresh_profiles()
+            self._save_profiles_order()
+            self.fetch_all_accounts_async()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def rename_profile(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        old_name = selected[0]
+
+        prompt = VercelPromptDialog(
+            self,
+            title="Rename",
+            prompt="New name:",
+            initial_value=old_name,
+        )
+
+        new_name = prompt.result
+        if not new_name or new_name == old_name:
+            return
+
+        new_name = new_name.strip().replace("/", "_").replace("\\", "_")
+        try:
+            (self.profiles_dir / f"{old_name}.json").rename(
+                self.profiles_dir / f"{new_name}.json"
+            )
+            self.refresh_profiles()
+            self._save_profiles_order()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def delete_profile(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        name = selected[0]
+        if messagebox.askyesno("Delete", f"Delete profile '{name}'?"):
+            try:
+                (self.profiles_dir / f"{name}.json").unlink()
+                self.refresh_profiles()
+                self._save_profiles_order()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+
+if __name__ == "__main__":
+    app = CodexVercelSwitcher()
+    app.mainloop()
