@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from api import extract_auth_info, fetch_api_usage_raw, parse_dynamic_usage
-from theme import THEME, apply_dark_titlebar
+from theme import THEME, apply_app_icon, apply_dark_titlebar
 from widgets import PasteJsonDialog, VercelProgressBar, VercelPromptDialog
 
 # ================= ГЛАВНОЕ ОКНО ПРИЛОЖЕНИЯ =================
@@ -27,6 +27,7 @@ class CodexVercelSwitcher(tk.Tk):
         self.configure(bg=THEME["bg_root"])
 
         apply_dark_titlebar(self)
+        apply_app_icon(self)
 
         self.codex_dir = Path.home() / ".codex"
         self.auth_file = self.codex_dir / "auth.json"

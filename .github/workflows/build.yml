@@ -25,7 +25,7 @@ jobs:
       - name: Build portable exe (PyInstaller)
         run: |
           python -m pip install --upgrade pip pyinstaller
-          pyinstaller --clean --noconfirm --onefile --windowed --name CodexSwitcher main.py
+          pyinstaller --clean --noconfirm --onefile --windowed --name CodexSwitcher --icon assets/icon.ico --add-data "assets/icon-512.png;assets" main.py
 
       - name: Build setup exe (Inno Setup)
         shell: pwsh
@@ -64,7 +64,7 @@ jobs:
       - name: Build app bundle (PyInstaller)
         run: |
           python -m pip install --upgrade pip pyinstaller
-          pyinstaller --clean --noconfirm --windowed --name CodexSwitcher main.py
+          pyinstaller --clean --noconfirm --windowed --name CodexSwitcher --icon assets/icon.icns --add-data "assets/icon-512.png:assets" main.py
 
       - name: Ad-hoc codesign and pack DMG
         run: |

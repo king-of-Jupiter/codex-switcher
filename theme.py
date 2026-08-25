@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 
 # ================= VERCEL DESIGN TOKENS =================
@@ -40,3 +41,19 @@ def apply_dark_titlebar(window):
             )
         except Exception:
             pass
+
+
+def apply_app_icon(window):
+    """Иконка окна из assets/icon-512.png (учитывает распаковку PyInstaller)."""
+    try:
+        import tkinter as tk
+
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        icon_path = base / "assets" / "icon-512.png"
+        if not icon_path.exists():
+            return
+        img = tk.PhotoImage(file=str(icon_path))
+        window._app_icon = img  # держим ссылку: иначе Tk соберёт картинку сборщиком мусора
+        window.iconphoto(True, img)  # default=True: иконка наследуется диалогами
+    except Exception:
+        pass
