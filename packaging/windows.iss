@@ -18,11 +18,11 @@ OutputDir=..\release
 OutputBaseFilename=CodexSwitcher-{#AppVersion}-setup-x64
 Compression=lzma2/max
 SolidCompression=yes
-ArchitecturesAllowed=x64compatible
-SetupIconFile=..\assets\icon.ico
+WizardStyle=modern
 PrivilegesRequiredOverridesAllowed=dialog commandline
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
+SetupIconFile=..\assets\icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
