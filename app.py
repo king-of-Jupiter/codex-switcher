@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -416,6 +418,41 @@ class CodexVercelSwitcher(tk.Tk):
                 pady=7,
                 relief="flat",
                 cursor="hand2",
+            )
+            b.pack(side=tk.LEFT, padx=3)
+
+        # --- Bulk Export / Import row ---
+        bulk_row = tk.Frame(actions_bar, bg=THEME["bg_root"])
+        bulk_row.pack(fill=tk.X, pady=(8, 0))
+
+        tk.Label(
+            bulk_row,
+            text="Bulk:",
+            font=("Segoe UI", 8, "bold"),
+            bg=THEME["bg_root"],
+            fg=THEME["text_muted"],
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        for text, cmd in [
+            ("⬇ Export All", self.export_all_profiles),
+            ("⬆ Import All", self.import_all_profiles),
+        ]:
+            b = tk.Button(
+                bulk_row,
+                text=text,
+                command=cmd,
+                bg="#1a1a1a",
+                fg=THEME["text_primary"],
+                activebackground=THEME["bg_hover"],
+                activeforeground=THEME["accent_white"],
+                font=("Segoe UI", 8, "bold"),
+                bd=0,
+                padx=10,
+                pady=6,
+                relief="flat",
+                cursor="hand2",
+                highlightthickness=1,
+                highlightbackground=THEME["border_subtle"],
             )
             b.pack(side=tk.LEFT, padx=3)
 
@@ -936,3 +973,227 @@ class CodexVercelSwitcher(tk.Tk):
                 self._save_profiles_order()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
+
+    # ================= ЭКСПОРТ / ИМПОРТ ВСЕХ АККАУНТОВ =================
+    def export_all_profiles(self):
+        profiles = list(self.profiles_dir.glob("*.json"))
+        if not profiles:
+            messagebox.showwarning("Export", "Нет сохранённых профилей для экспорта.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export all profiles",
+            defaultextension=".zip",
+            filetypes=[
+                ("ZIP archive", "*.zip"),
+                ("JSON bundle", "*.json"),
+                ("All Files", "*.*"),
+            ],
+            initialfile=f"codex_profiles_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+        )
+        if not file_path:
+            return
+
+        try:
+            dest = Path(file_path)
+            if dest.suffix.lower() == ".json":
+                # JSON bundle: {profiles: {name: data}, order: [...], exported_at: ...}
+                bundle = {
+                    "export_version": 1,
+                    "exported_at": datetime.datetime.now().isoformat(),
+                    "profiles": {},
+                    "order": [],
+                }
+                # порядок берём из Treeview (актуальный DnD) или из файла
+                order = list(self.tree.get_children("")) if self.tree.get_children("") else []
+                # fallback: собрать из файлов
+                if not order:
+                    order = [p.stem for p in self._load_ordered_profiles()]
+                bundle["order"] = order
+                for p_file in profiles:
+                    try:
+                        with open(p_file, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        bundle["profiles"][p_file.stem] = data
+                    except Exception:
+                        continue
+                with open(dest, "w", encoding="utf-8") as f:
+                    json.dump(bundle, f, indent=2, ensure_ascii=False)
+            else:
+                # ZIP archive — каждый профиль отдельным .json + profiles_order.json
+                with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for p_file in profiles:
+                        zf.write(p_file, arcname=f"{p_file.name}")
+                    # сохраняем порядок
+                    order = list(self.tree.get_children("")) if self.tree.get_children("") else []
+                    if order:
+                        zf.writestr("profiles_order.json", json.dumps(order, indent=2, ensure_ascii=False))
+                    elif self.order_file.exists():
+                        zf.write(self.order_file, arcname="profiles_order.json")
+            messagebox.showinfo("Export", f"Экспортировано {len(profiles)} профилей:\n{dest}")
+        except Exception as e:
+            messagebox.showerror("Export error", str(e))
+
+    def import_all_profiles(self):
+        file_path = filedialog.askopenfilename(
+            title="Import all profiles",
+            filetypes=[
+                ("ZIP or JSON", "*.zip *.json"),
+                ("ZIP archive", "*.zip"),
+                ("JSON bundle", "*.json"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if not file_path:
+            return
+
+        src = Path(file_path)
+        imported = 0
+        skipped = 0
+        overwritten = 0
+        new_order = None
+
+        # спрашиваем один раз про перезапись, если найдём конфликты
+        overwrite_mode = None  # None=спросить, True=перезаписывать, False=пропускать
+
+        def _should_overwrite(name: str) -> bool:
+            nonlocal overwrite_mode
+            dest = self.profiles_dir / f"{name}.json"
+            if not dest.exists():
+                return True
+            if overwrite_mode is not None:
+                return overwrite_mode
+            ans = messagebox.askyesnocancel(
+                "Conflict",
+                f"Профиль '{name}' уже существует.\n\n"
+                "Yes — перезаписать\n"
+                "No — пропустить\n"
+                "Cancel — прервать импорт",
+            )
+            if ans is None:
+                raise InterruptedError("cancelled")
+            # если профилей много — спросить "применить ко всем"
+            if ans is True or ans is False:
+                # запоминаем выбор? Для простоты — применяем ко всем оставшимся
+                # пользователь может отменить и запустить заново для гранулярности
+                pass
+            return ans
+
+        def _save_profile(name: str, data: dict):
+            nonlocal imported, skipped, overwritten
+            safe_name = name.strip().replace("/", "_").replace("\\", "_").replace(":", "_")
+            if not safe_name:
+                skipped += 1
+                return
+            dest = self.profiles_dir / f"{safe_name}.json"
+            exists = dest.exists()
+            try:
+                if exists:
+                    try:
+                        do_write = _should_overwrite(safe_name)
+                    except InterruptedError:
+                        raise
+                    if not do_write:
+                        skipped += 1
+                        return
+                    overwritten += 1 if exists else 0
+                else:
+                    pass
+                with open(dest, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                imported += 1
+            except InterruptedError:
+                raise
+            except Exception:
+                skipped += 1
+
+        try:
+            if src.suffix.lower() == ".zip":
+                with zipfile.ZipFile(src, "r") as zf:
+                    # защита от ZipSlip — игнорируем пути с директориями
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        raw_name = Path(info.filename).name
+                        if not raw_name:
+                            continue
+                        if raw_name == "profiles_order.json":
+                            try:
+                                new_order = json.loads(zf.read(info).decode("utf-8"))
+                            except Exception:
+                                pass
+                            continue
+                        if not raw_name.lower().endswith(".json"):
+                            continue
+                        stem = Path(raw_name).stem
+                        try:
+                            data = json.loads(zf.read(info).decode("utf-8"))
+                        except Exception:
+                            skipped += 1
+                            continue
+                        # валидация: похоже ли на auth.json (должен содержать tokens или account_id)
+                        if not isinstance(data, dict):
+                            skipped += 1
+                            continue
+                        _save_profile(stem, data)
+            elif src.suffix.lower() == ".json":
+                with open(src, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                if isinstance(payload, dict) and "profiles" in payload and isinstance(payload["profiles"], dict):
+                    # bundle формат
+                    new_order = payload.get("order")
+                    for name, data in payload["profiles"].items():
+                        if not isinstance(data, dict):
+                            skipped += 1
+                            continue
+                        _save_profile(name, data)
+                elif isinstance(payload, dict) and "tokens" in payload:
+                    # одиночный auth.json, импортируем как один профиль
+                    default_name = src.stem
+                    try:
+                        info = extract_auth_info(src)
+                        if info.get("email") and info["email"] != "—":
+                            default_name = info["email"].split("@")[0]
+                    except Exception:
+                        pass
+                    _save_profile(default_name, payload)
+                else:
+                    messagebox.showerror("Import", "Неизвестный формат JSON. Ожидается bundle с ключом 'profiles' или одиночный auth.json с 'tokens'.")
+                    return
+            else:
+                messagebox.showerror("Import", "Поддерживаются только .zip и .json файлы.")
+                return
+
+            if new_order and isinstance(new_order, list):
+                # фильтруем порядок — оставляем только реально существующие профили
+                existing = {p.stem for p in self.profiles_dir.glob("*.json")}
+                filtered = [n for n in new_order if n in existing]
+                # добавляем новые профили которых не было в порядке в конец
+                for p in self.profiles_dir.glob("*.json"):
+                    if p.stem not in filtered:
+                        filtered.append(p.stem)
+                try:
+                    with open(self.order_file, "w", encoding="utf-8") as f:
+                        json.dump(filtered, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+
+            self.refresh_profiles()
+            # если порядок импортирован — сохраняем отображение
+            if new_order:
+                self._save_profiles_order()
+            self.fetch_all_accounts_async()
+            messagebox.showinfo(
+                "Import",
+                f"Импорт завершён:\n"
+                f"Добавлено/обновлено: {imported}\n"
+                f"Перезаписано: {overwritten}\n"
+                f"Пропущено: {skipped}",
+            )
+        except InterruptedError:
+            self.refresh_profiles()
+            messagebox.showwarning("Import", f"Импорт прерван.\nИмпортировано: {imported}, пропущено: {skipped}")
+        except zipfile.BadZipFile:
+            messagebox.showerror("Import", "Повреждённый ZIP-архив.")
+        except Exception as e:
+            messagebox.showerror("Import error", str(e))

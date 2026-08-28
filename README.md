@@ -1,6 +1,6 @@
 # Codex Switcher
 
-GUI-менеджер профилей Codex / ChatGPT: переключение аккаунтов через `~/.codex/auth.json`, просмотр email/плана из JWT, импорт профиля вставкой или файлом, drag-and-drop сортировка. Python 3 + Tkinter, без сторонних зависимостей.
+GUI-менеджер профилей Codex / ChatGPT: переключение аккаунтов через `~/.codex/auth.json`, просмотр email/плана из JWT, импорт профиля вставкой или файлом, drag-and-drop сортировка, массовый экспорт/импорт всех аккаунтов (ZIP или JSON bundle). Python 3 + Tkinter, без сторонних зависимостей.
 
 ![Интерфейс приложения](docs/screen.png)
 
@@ -16,6 +16,14 @@ GUI-менеджер профилей Codex / ChatGPT: переключение 
 
 **macOS:** сборка подписана ad-hoc (без нотаризации). При первом запуске: правый клик по приложению → «Открыть», либо
 `xattr -cr "/Applications/Codex Switcher.app"`.
+
+## Возможности
+
+- Таблица всех профилей с live-квотами (7-day quota, reset tickets)
+- Переключение активного `auth.json` в один клик + авто-рестарт ChatGPT/Codex
+- Импорт: Paste JSON, Import File (один профиль)
+- **Bulk Export / Import All**: экспорт всех профилей в `ZIP` (по файлу на профиль + `profiles_order.json`) или в `JSON bundle`; импорт из ZIP/JSON с сохранением порядка и опцией перезаписи
+- Drag-and-drop сортировка и сохранение порядка
 
 ## Запуск из исходников
 
