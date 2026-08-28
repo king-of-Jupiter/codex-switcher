@@ -33,11 +33,17 @@ class CodexVercelSwitcher(tk.Tk):
 
         self.codex_dir = Path.home() / ".codex"
         self.auth_file = self.codex_dir / "auth.json"
-        self.profiles_dir = self.codex_dir / "profiles"
-        self.order_file = self.codex_dir / "profiles_order.json"
+
+        # Все настройки приложения — в единой папке внутри .codex
+        self.app_dir = self.codex_dir / "codex-switcher"
+        self.profiles_dir = self.app_dir / "profiles"
+        self.order_file = self.app_dir / "profiles_order.json"
 
         self.codex_dir.mkdir(parents=True, exist_ok=True)
+        self.app_dir.mkdir(parents=True, exist_ok=True)
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        self._migrate_legacy_storage()
 
         self._dnd_item = None
 
@@ -47,6 +53,54 @@ class CodexVercelSwitcher(tk.Tk):
 
         # Автоматический запуск опроса всех квот при старте приложения
         self.after(150, self.fetch_all_accounts_async)
+
+    def _migrate_legacy_storage(self):
+        """Миграция из старых путей ~/.codex/profiles и ~/.codex/profiles_order.json
+        в единую папку ~/.codex/codex-switcher/. Выполняется один раз при старте."""
+        try:
+            old_profiles_dir = self.codex_dir / "profiles"
+            old_order_file = self.codex_dir / "profiles_order.json"
+
+            # Избегаем самомиграции если пути совпадают
+            try:
+                same_profiles = old_profiles_dir.resolve() == self.profiles_dir.resolve()
+            except Exception:
+                same_profiles = old_profiles_dir == self.profiles_dir
+
+            if not same_profiles and old_profiles_dir.exists() and old_profiles_dir.is_dir():
+                for f in old_profiles_dir.glob("*.json"):
+                    dest = self.profiles_dir / f.name
+                    if dest.exists():
+                        continue
+                    try:
+                        shutil.move(str(f), str(dest))
+                    except Exception:
+                        try:
+                            shutil.copy2(f, dest)
+                        except Exception:
+                            pass
+                # Удаляем старую папку если пуста
+                try:
+                    if not any(old_profiles_dir.iterdir()):
+                        old_profiles_dir.rmdir()
+                except Exception:
+                    pass
+
+            try:
+                same_order = old_order_file.resolve() == self.order_file.resolve()
+            except Exception:
+                same_order = old_order_file == self.order_file
+
+            if not same_order and old_order_file.exists() and not self.order_file.exists():
+                try:
+                    shutil.move(str(old_order_file), str(self.order_file))
+                except Exception:
+                    try:
+                        shutil.copy2(old_order_file, self.order_file)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     def _setup_styles(self):
         style = ttk.Style(self)
