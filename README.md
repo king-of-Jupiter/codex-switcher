@@ -1,34 +1,42 @@
-[English](README_EN.md) | **Русский**
+[Русский](README_RU.md) | **English**
 
 # Codex Switcher
 
-GUI-менеджер профилей Codex / ChatGPT: переключение аккаунтов через `~/.codex/auth.json`, просмотр email/плана из JWT, импорт профиля вставкой или файлом, drag-and-drop сортировка, массовый экспорт/импорт всех аккаунтов (ZIP или JSON bundle). Все данные приложения хранятся в единой папке `~/.codex/codex-switcher/` (автоматическая миграция из `~/.codex/profiles`). Python 3 + Tkinter, без сторонних зависимостей.
+GUI profile manager for Codex / ChatGPT: switch accounts via `~/.codex/auth.json`, view email/plan from JWT, import profiles by paste or file, drag-and-drop ordering, bulk export/import of all accounts (ZIP or JSON bundle). All app data is stored in a single folder `~/.codex/codex-switcher/` (auto-migration from legacy `~/.codex/profiles`). Python 3 + Tkinter, no third-party dependencies.
 
-![Интерфейс приложения](docs/screen.png)
+![App UI](docs/screen.png)
 
-## Установка
+## Installation
 
-Скачайте установщик со страницы [Releases](../../releases):
+Download the installer from [Releases](../../releases):
 
-| Файл | Платформа |
+| File | Platform |
 |---|---|
-| `CodexSwitcher-x.y.z-setup-x64.exe` | Windows 10/11 (установщик) |
+| `CodexSwitcher-x.y.z-setup-x64.exe` | Windows 10/11 (installer) |
 | `CodexSwitcher-x.y.z-macos-arm64.dmg` | macOS Apple Silicon |
 | `CodexSwitcher-x.y.z-macos-intel.dmg` | macOS Intel |
 
-**macOS:** сборка подписана ad-hoc (без нотаризации). При первом запуске: правый клик по приложению → «Открыть», либо
+**macOS:** builds are ad-hoc signed (not notarized). On first launch: right-click the app → "Open", or run
 `xattr -cr "/Applications/Codex Switcher.app"`.
 
-## Возможности
+## Features
 
-- Таблица всех профилей с live-квотами (7-day quota, reset tickets)
-- Переключение активного `auth.json` в один клик + авто-рестарт ChatGPT/Codex
-- Импорт: Paste JSON, Import File (один профиль)
-- **Bulk Export / Import All**: экспорт всех профилей в `ZIP` (по файлу на профиль + `profiles_order.json`) или в `JSON bundle`; импорт из ZIP/JSON с сохранением порядка и опцией перезаписи
-- Drag-and-drop сортировка и сохранение порядка
+- Profiles table with live quotas (7-day quota, reset tickets)
+- One-click activation of `auth.json` + auto-restart of ChatGPT/Codex
+- Import: Paste JSON, Import File (single profile)
+- **Bulk Export / Import All**: export all profiles to `ZIP` (one file per profile + `profiles_order.json`) or to a `JSON bundle`; import from ZIP/JSON with order preservation and overwrite prompt
+- Drag-and-drop sorting with saved order
 
-## Запуск из исходников
+## Storage
+
+- `~/.codex/auth.json` — active account (shared with Codex CLI)
+- `~/.codex/codex-switcher/profiles/*.json` — saved profiles
+- `~/.codex/codex-switcher/profiles_order.json` — custom order
+
+Legacy `~/.codex/profiles` and `~/.codex/profiles_order.json` are auto-migrated on first launch.
+
+## Run from source
 
 ```bash
-python main.py   # Python 3.10+ с tkinter (входит в стандартные сборки)
+python main.py   # Python 3.10+ with tkinter (included in standard builds)
 ```
