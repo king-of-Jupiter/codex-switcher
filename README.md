@@ -1,3 +1,5 @@
+[English](README_EN.md) | **Русский**
+
 # Codex Switcher
 
 GUI-менеджер профилей Codex / ChatGPT: переключение аккаунтов через `~/.codex/auth.json`, просмотр email/плана из JWT, импорт профиля вставкой или файлом, drag-and-drop сортировка, массовый экспорт/импорт всех аккаунтов (ZIP или JSON bundle). Все данные приложения хранятся в единой папке `~/.codex/codex-switcher/` (автоматическая миграция из `~/.codex/profiles`). Python 3 + Tkinter, без сторонних зависимостей.
