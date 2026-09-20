@@ -340,7 +340,7 @@ class CodexVercelSwitcher(tk.Tk):
         tbl_bg = tk.Frame(tbl_border, bg=THEME["bg_surface"])
         tbl_bg.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("name", "email", "plan", "quota", "tickets", "status")
+        cols = ("name", "email", "plan", "quota_7d", "quota_5h", "tickets", "status")
         self.tree = ttk.Treeview(
             tbl_bg, columns=cols, show="headings", selectmode="browse"
         )
@@ -348,14 +348,16 @@ class CodexVercelSwitcher(tk.Tk):
         self.tree.heading("name", text="PROFILE")
         self.tree.heading("email", text="EMAIL / USER")
         self.tree.heading("plan", text="PLAN")
-        self.tree.heading("quota", text="7D QUOTA")
+        self.tree.heading("quota_7d", text="7D QUOTA")
+        self.tree.heading("quota_5h", text="5H QUOTA")
         self.tree.heading("tickets", text="RESETS")
         self.tree.heading("status", text="STATUS")
 
         self.tree.column("name", width=120, anchor="w")
         self.tree.column("email", width=240, anchor="w")
         self.tree.column("plan", width=75, anchor="center")
-        self.tree.column("quota", width=110, anchor="center")
+        self.tree.column("quota_7d", width=100, anchor="center")
+        self.tree.column("quota_5h", width=100, anchor="center")
         self.tree.column("tickets", width=85, anchor="center")
         self.tree.column("status", width=90, anchor="center")
 
@@ -688,8 +690,9 @@ class CodexVercelSwitcher(tk.Tk):
 
             # Подставляем сохраненные квоты, если они уже были получены
             prev = existing_values.get(p_name)
-            quota_val = prev[3] if prev and len(prev) > 3 else "—"
-            ticket_val = prev[4] if prev and len(prev) > 4 else "—"
+            quota_7d_val = prev[3] if prev and len(prev) > 3 else "—"
+            quota_5h_val = prev[4] if prev and len(prev) > 4 else "—"
+            ticket_val = prev[5] if prev and len(prev) > 5 else "—"
 
             self.tree.insert(
                 "",
@@ -699,11 +702,13 @@ class CodexVercelSwitcher(tk.Tk):
                     p_name,
                     p_info["email"],
                     p_info["plan"],
-                    quota_val,
+                    quota_7d_val,
+                    quota_5h_val,
                     ticket_val,
                     status_text,
                 ),
             )
+
 
         if matched_profile:
             self.lbl_active_name.config(text=f"Active Profile: {matched_profile}")
@@ -751,19 +756,23 @@ class CodexVercelSwitcher(tk.Tk):
                 parsed = parse_dynamic_usage(raw)
 
                 quota_7d = "—"
+                quota_5h = "—"
                 tickets_str = "—"
 
                 if "error" not in parsed:
                     tickets_str = str(parsed.get("reset_tickets", 0))
                     for w in parsed["windows"]:
-                        if "7д" in w["title"] or "Основной" in w["title"]:
+                        if w.get("window_seconds") == 18000:
+                            quota_5h = f"{w['left']}%"
+                        elif "7д" in w["title"] or "Основной" in w["title"]:
                             quota_7d = f"{w['left']}%"
 
-                def _upd_row(n=p_name, q=quota_7d, t=tickets_str):
+                def _upd_row(n=p_name, q7=quota_7d, q5=quota_5h, t=tickets_str):
                     if self.tree.exists(n):
                         vals = list(self.tree.item(n, "values"))
-                        vals[3] = q
-                        vals[4] = t
+                        vals[3] = q7
+                        vals[4] = q5
+                        vals[5] = t
                         self.tree.item(n, values=vals)
 
                 self.after(0, _upd_row)

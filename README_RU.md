@@ -21,7 +21,7 @@ GUI-менеджер профилей Codex / ChatGPT: переключение 
 
 ## Возможности
 
-- Таблица всех профилей с live-квотами (7-day quota, reset tickets)
+- Таблица всех профилей с live-квотами (пятичасовая и 7-дневная квоты, reset tickets)
 - Переключение активного `auth.json` в один клик + авто-рестарт ChatGPT/Codex
 - Импорт: Paste JSON, Import File (один профиль)
 - **Bulk Export / Import All**: экспорт всех профилей в `ZIP` (по файлу на профиль + `profiles_order.json`) или в `JSON bundle`; импорт из ZIP/JSON с сохранением порядка и опцией перезаписи

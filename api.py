@@ -348,6 +348,7 @@ def parse_dynamic_usage(raw_data: dict) -> dict:
             "used": used,
             "left": left,
             "reset_str": reset_str,
+            "window_seconds": sec,
         }
 
     rate_limit = raw_data.get("rate_limit", {})
