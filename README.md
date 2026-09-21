@@ -23,6 +23,7 @@ Download the installer from [Releases](../../releases):
 
 - Profiles table with live quotas (5-hour quota, 7-day quota, reset tickets)
 - One-click activation of `auth.json` + auto-restart of ChatGPT/Codex
+- **New Account**: delete the active `auth.json`, restart ChatGPT/Codex for login, then save the new account as a profile
 - Import: Paste JSON, Import File (single profile)
 - **Bulk Export / Import All**: export all profiles to `ZIP` (one file per profile + `profiles_order.json`) or to a `JSON bundle`; import from ZIP/JSON with order preservation and overwrite prompt
 - Drag-and-drop sorting with saved order

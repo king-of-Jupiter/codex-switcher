@@ -452,6 +452,23 @@ class CodexVercelSwitcher(tk.Tk):
         )
         btn_paste.pack(side=tk.LEFT, padx=3)
 
+        btn_new_account = tk.Button(
+            btns_row,
+            text="＋ New Account",
+            command=self.add_new_account,
+            bg=THEME["accent_red"],
+            fg=THEME["accent_white"],
+            activebackground="#b91c1c",
+            activeforeground=THEME["accent_white"],
+            font=("Segoe UI", 8, "bold"),
+            bd=0,
+            padx=11,
+            pady=7,
+            relief="flat",
+            cursor="hand2",
+        )
+        btn_new_account.pack(side=tk.LEFT, padx=3)
+
         sec_btns = [
             ("Save Active", self.save_current_auth),
             ("Import File", self.import_profile),
@@ -896,6 +913,29 @@ class CodexVercelSwitcher(tk.Tk):
         else:
             subprocess.run(["pkill", "-f", "ChatGPT"], capture_output=True)
             subprocess.run(["pkill", "-f", "Codex"], capture_output=True)
+
+    def add_new_account(self):
+        """Clear the active auth and restart Codex for a fresh login."""
+        if not messagebox.askyesno(
+            "Add New Account",
+            "This will delete the current auth.json and restart ChatGPT/Codex.\n"
+            "Saved profiles will not be deleted. Continue?",
+        ):
+            return
+
+        try:
+            if self.auth_file.exists():
+                self.auth_file.unlink()
+            self.refresh_profiles()
+            self._restart_codex_app()
+            messagebox.showinfo(
+                "Add New Account",
+                "auth.json was deleted and ChatGPT/Codex restarted.\n\n"
+                "Log in to the new account, then return here and click "
+                "Save Active.",
+            )
+        except OSError as e:
+            messagebox.showerror("Add New Account", f"Failed to reset auth.json:\n{e}")
 
     def switch_profile(self):
         """Мгновенное локальное переключение профиля без лишних повторных сетевых запросов."""
