@@ -1,0 +1,25 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "console",
+  "axes": "dark/grotesk-sans/chromatic-amber",
+  "hero": "none",
+  "nav": "top bar, two tabs, check action",
+  "footer": "none",
+  "imagery": "product",
+  "photos": [],
+  "entry": "active account readings",
+  "signature": "active account quota readings set large",
+  "sections": [
+   "active account",
+   "profiles table",
+   "raw response"
+  ],
+  "waived": [],
+  "prompt": "desktop account switcher for Codex/ChatGPT profiles with live usage quotas",
+  "date": "2026-10-28"
+ }
+]

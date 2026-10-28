@@ -2,42 +2,60 @@
 
 # Codex Switcher
 
-GUI profile manager for Codex / ChatGPT: switch accounts via `~/.codex/auth.json`, view email/plan from JWT, import profiles by paste or file, drag-and-drop ordering, bulk export/import of all accounts (ZIP or JSON bundle). All app data is stored in a single folder `~/.codex/codex-switcher/` (auto-migration from legacy `~/.codex/profiles`). Python 3 + Tkinter, no third-party dependencies.
+Desktop profile manager for Codex / ChatGPT: switch accounts via `~/.codex/auth.json`, see each account's live usage (5-hour and 7-day windows, reset tickets, credits), import profiles by paste or file, reorder them by drag and drop, and export or import every account at once (ZIP or JSON bundle). All app data lives in one folder, `~/.codex/codex-switcher/` (legacy `~/.codex/profiles` is migrated automatically).
+
+Built with [Tauri 2](https://tauri.app): a Rust backend and a TypeScript + Vite UI. Runs on Windows, macOS and Linux.
 
 ![App UI](docs/screen.png)
 
 ## Installation
 
-Download the installer from [Releases](../../releases):
+Download a build from [Releases](../../releases):
 
 | File | Platform |
 |---|---|
-| `CodexSwitcher-x.y.z-setup-x64.exe` | Windows 10/11 (installer) |
-| `CodexSwitcher-x.y.z-macos-arm64.dmg` | macOS Apple Silicon |
-| `CodexSwitcher-x.y.z-macos-intel.dmg` | macOS Intel |
+| `Codex Switcher_x.y.z_x64-setup.exe` / `.msi` | Windows 10/11 |
+| `Codex Switcher_x.y.z_aarch64.dmg` | macOS Apple Silicon |
+| `Codex Switcher_x.y.z_x64.dmg` | macOS Intel |
+| `.AppImage` / `.deb` / `.rpm` | Linux x64 |
 
-**macOS:** builds are ad-hoc signed (not notarized). On first launch: right-click the app → "Open", or run
+**macOS:** builds are ad-hoc signed (not notarized). On first launch: right-click the app, then "Open", or run
 `xattr -cr "/Applications/Codex Switcher.app"`.
 
 ## Features
 
-- Profiles table with live quotas (5-hour quota, 7-day quota, reset tickets)
-- One-click activation of `auth.json` + auto-restart of ChatGPT/Codex
-- **New Account**: delete the active `auth.json`, restart ChatGPT/Codex for login, then save the new account as a profile
-- Import: Paste JSON, Import File (single profile)
-- **Bulk Export / Import All**: export all profiles to `ZIP` (one file per profile + `profiles_order.json`) or to a `JSON bundle`; import from ZIP/JSON with order preservation and overwrite prompt
-- Drag-and-drop sorting with saved order
+- The active account up top: its 5-hour and 7-day windows as large readings, reset times, plan, reset tickets and credits
+- Profiles table with live quotas for every saved account; quotas are checked on start and with **Check quotas**
+- **Activate** (or double-click / Enter on a row) copies the profile to `auth.json` (the old one goes to `auth.json.bak`) and optionally restarts ChatGPT/Codex
+- **New account**: removes the active `auth.json`, restarts ChatGPT/Codex for a fresh login; then **Save active** stores it as a profile
+- Import a single profile: **Paste JSON** (the account is detected as you paste) or **Import file**
+- **Export all / Import all**: ZIP (one file per profile plus `profiles_order.json`) or a JSON bundle; on import you pick which existing profiles to overwrite
+- Reorder by dragging the handle, or with Alt+Up / Alt+Down; F2 renames, Delete removes
+- **Raw response** tab with the last usage JSON for the active account
+- Expired access tokens are refreshed automatically; the refreshed tokens are written to both `auth.json` and its saved profile so the two stay in sync
 
 ## Storage
 
-- `~/.codex/auth.json` — active account (shared with Codex CLI)
-- `~/.codex/codex-switcher/profiles/*.json` — saved profiles
-- `~/.codex/codex-switcher/profiles_order.json` — custom order
-
-Legacy `~/.codex/profiles` and `~/.codex/profiles_order.json` are auto-migrated on first launch.
+- `~/.codex/auth.json`: active account (shared with Codex CLI)
+- `~/.codex/codex-switcher/profiles/*.json`: saved profiles
+- `~/.codex/codex-switcher/profiles_order.json`: custom order
 
 ## Run from source
 
+Requirements: [Node.js](https://nodejs.org) 20+, [Rust](https://rustup.rs) stable, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS (WebView2 on Windows, Xcode CLT on macOS, `libwebkit2gtk-4.1-dev` on Linux).
+
 ```bash
-python main.py   # Python 3.10+ with tkinter (included in standard builds)
+npm install
+npm run tauri dev     # run the app
+npm run tauri build   # build installers into src-tauri/target/release/bundle
+```
+
+`npm run dev` alone serves the UI at http://localhost:1420 with mock data, for working on the interface in a browser.
+
+## CI / CD
+
+`.github/workflows/build.yml` runs on every push and pull request: lint (rustfmt, clippy), Rust tests and a UI type check, then bundles for Windows, macOS (arm64 and Intel) and Linux and uploads them as workflow artifacts. Pushing a `v*` tag sets the version from the tag and publishes a GitHub Release with all installers:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
 ```
