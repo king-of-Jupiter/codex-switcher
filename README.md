@@ -19,6 +19,10 @@ Download a build from [Releases](../../releases):
 | `Codex Switcher_x.y.z_x64.dmg` | macOS Intel |
 | `.AppImage` / `.deb` / `.rpm` | Linux x64 |
 
+**Upgrading from 0.1.x:** the old installer is a different app to Windows, so the new one installs alongside it. Uninstall the old "Codex Switcher" from Settings, Apps; your profiles stay, since both versions use `~/.codex/codex-switcher/`.
+
+**Windows:** the build is not code-signed, so SmartScreen may warn on first run: choose "More info", then "Run anyway".
+
 **macOS:** builds are ad-hoc signed (not notarized). On first launch: right-click the app, then "Open", or run
 `xattr -cr "/Applications/Codex Switcher.app"`.
 
@@ -27,12 +31,22 @@ Download a build from [Releases](../../releases):
 - The active account up top: its 5-hour and 7-day windows as large readings, reset times, plan, reset tickets and credits
 - Profiles table with live quotas for every saved account; quotas are checked on start and with **Check quotas**
 - **Activate** (or double-click / Enter on a row) copies the profile to `auth.json` (the old one goes to `auth.json.bak`) and optionally restarts ChatGPT/Codex
-- **New account**: removes the active `auth.json`, restarts ChatGPT/Codex for a fresh login; then **Save active** stores it as a profile
+- **New account**: removes the active `auth.json` (a copy goes to `auth.json.bak`), restarts ChatGPT/Codex for a fresh login; then **Save active** stores it as a profile
 - Import a single profile: **Paste JSON** (the account is detected as you paste) or **Import file**
 - **Export all / Import all**: ZIP (one file per profile plus `profiles_order.json`) or a JSON bundle; on import you pick which existing profiles to overwrite
 - Reorder by dragging the handle, or with Alt+Up / Alt+Down; F2 renames, Delete removes
 - **Raw response** tab with the last usage JSON for the active account
 - Expired access tokens are refreshed automatically; the refreshed tokens are written to both `auth.json` and its saved profile so the two stay in sync
+
+### How the restart works
+
+| OS | What happens |
+|---|---|
+| Windows | ChatGPT/Codex are closed and the Codex (or ChatGPT) app is launched again from the Start menu |
+| macOS | ChatGPT and Codex, if running, are asked to quit, given up to 5 s (then force-closed), and reopened once they have exited |
+| Linux | Running ChatGPT/Codex processes are closed; start them again yourself |
+
+Processes are matched by their exact name, so Codex Switcher and the `codex` CLI are never closed.
 
 ## Storage
 
