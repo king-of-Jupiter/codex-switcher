@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Switch Codex and ChatGPT accounts and watch what is left of each one's usage." />
+    <title>Codex Switcher</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">Codex Switcher</span>
+      <div class="tabs" role="tablist" aria-label="View">
+        <button type="button" role="tab" id="tab-accounts" aria-controls="view-accounts" aria-selected="true">Accounts</button>
+        <button type="button" role="tab" id="tab-raw" aria-controls="view-raw" aria-selected="false" tabindex="-1">Raw response</button>
+      </div>
+      <p class="bar-status measured" id="check-status" aria-live="polite"></p>
+      <button type="button" class="btn" id="btn-check">Check quotas</button>
+    </header>
+
+    <main>
+      <section id="view-accounts" role="tabpanel" aria-labelledby="tab-accounts">
+        <section class="active panels" aria-labelledby="active-name" id="active">
+          <div class="cell cell--account">
+            <h1><span class="visually-hidden">Active account: </span><span id="active-name"></span></h1>
+            <p class="active-email" id="active-email"></p>
+            <dl class="facts">
+              <div><dt>Plan</dt><dd><span class="chip chip--cool" id="active-plan"></span></dd></div>
+              <div><dt>Paid until</dt><dd class="measured" id="active-expires"></dd></div>
+            </dl>
+          </div>
+          <div class="cell cell--reading" data-window="5h">
+            <p class="label">5-hour window</p>
+            <p class="reading" data-reading></p>
+            <div class="meter" data-meter><span></span></div>
+            <p class="reading-note" data-note>Waiting for the first check</p>
+          </div>
+          <div class="cell cell--reading" data-window="7d">
+            <p class="label">7-day window</p>
+            <p class="reading" data-reading></p>
+            <div class="meter" data-meter><span></span></div>
+            <p class="reading-note" data-note>Waiting for the first check</p>
+          </div>
+          <div class="cell cell--extras">
+            <dl class="facts facts--stack">
+              <div><dt>Reset tickets</dt><dd class="measured measured--lg" id="active-tickets"></dd></div>
+              <div><dt>Credits</dt><dd class="measured measured--lg" id="active-credits"></dd></div>
+            </dl>
+          </div>
+          <p class="active-error" id="active-error" hidden></p>
+        </section>
+
+        <section class="profiles panel" aria-labelledby="profiles-title">
+          <div class="panel-head">
+            <h2 id="profiles-title">Profiles <span class="count measured" id="profiles-count"></span></h2>
+            <div class="actions">
+              <button type="button" class="btn btn--quiet" id="btn-rename" disabled>Rename</button>
+              <button type="button" class="btn btn--quiet" id="btn-delete" disabled>Delete</button>
+              <button type="button" class="btn btn--primary" id="btn-activate" disabled>Activate</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table" id="profiles-table">
+              <thead>
+                <tr>
+                  <th scope="col" class="col-grip"><span class="visually-hidden">Order</span></th>
+                  <th scope="col">Profile</th>
+                  <th scope="col" class="col-email">Email</th>
+                  <th scope="col">Plan</th>
+                  <th scope="col" class="col-num">5-hour left</th>
+                  <th scope="col" class="col-num">7-day left</th>
+                  <th scope="col" class="col-num">Resets</th>
+                  <th scope="col" class="col-status"><span class="visually-hidden">Status</span></th>
+                </tr>
+              </thead>
+              <tbody id="profiles-body"></tbody>
+            </table>
+            <div class="empty" id="profiles-empty" hidden>
+              <h3>No saved profiles yet</h3>
+              <p>Save the account ChatGPT/Codex is signed in to, or bring one in from a file.</p>
+              <button type="button" class="btn" id="btn-empty-save">Save active account</button>
+            </div>
+          </div>
+
+          <div class="panel-foot">
+            <div class="group" role="group" aria-label="Add a profile">
+              <button type="button" class="btn btn--quiet" id="btn-save">Save active</button>
+              <button type="button" class="btn btn--quiet" id="btn-paste">Paste JSON</button>
+              <button type="button" class="btn btn--quiet" id="btn-import">Import file</button>
+              <button type="button" class="btn btn--quiet" id="btn-new">New account</button>
+            </div>
+            <div class="group" role="group" aria-label="All profiles">
+              <button type="button" class="btn btn--quiet" id="btn-export-all">Export all</button>
+              <button type="button" class="btn btn--quiet" id="btn-import-all">Import all</button>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="opt-restart" checked />
+              <span>Restart ChatGPT/Codex after switching</span>
+            </label>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-raw" class="raw panel" role="tabpanel" aria-labelledby="tab-raw" hidden>
+        <div class="panel-head">
+          <h2>Last response for the active account</h2>
+          <p class="measured endpoint">chatgpt.com/backend-api/wham/usage</p>
+          <button type="button" class="btn btn--quiet" id="btn-copy-raw">Copy JSON</button>
+        </div>
+        <pre class="code" id="raw-json" tabindex="0" aria-label="Raw JSON response">No response yet.</pre>
+      </section>
+    </main>
+
+    <dialog class="dialog" id="dlg-prompt" aria-labelledby="dlg-prompt-title">
+      <form method="dialog">
+        <h2 id="dlg-prompt-title"></h2>
+        <label class="field">
+          <span id="dlg-prompt-label">Profile name</span>
+          <input type="text" name="value" id="dlg-prompt-input" autocomplete="off" spellcheck="false" required />
+        </label>
+        <p class="field-hint" id="dlg-prompt-hint"></p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn--quiet" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" class="btn btn--primary" value="ok" id="dlg-prompt-ok">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="dlg-confirm" aria-labelledby="dlg-confirm-title">
+      <form method="dialog">
+        <h2 id="dlg-confirm-title"></h2>
+        <p class="dialog-body" id="dlg-confirm-body"></p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn--quiet" value="cancel" id="dlg-confirm-cancel">Cancel</button>
+          <button type="submit" class="btn btn--primary" value="ok" id="dlg-confirm-ok">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog dialog--wide" id="dlg-paste" aria-labelledby="dlg-paste-title">
+      <form method="dialog">
+        <h2 id="dlg-paste-title">Paste an auth.json</h2>
+        <label class="field">
+          <span>Contents of auth.json</span>
+          <textarea name="json" id="dlg-paste-text" rows="10" spellcheck="false" autocomplete="off" placeholder='{"tokens": {"access_token": "…"}}'></textarea>
+        </label>
+        <p class="field-hint" id="dlg-paste-detect" aria-live="polite">Paste the JSON, and the account will be read from it.</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn btn--quiet dialog-actions-left" id="dlg-paste-clip">Paste from clipboard</button>
+          <button type="submit" class="btn btn--quiet" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" class="btn btn--primary" value="ok" id="dlg-paste-ok" disabled>Save profile</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="dlg-conflicts" aria-labelledby="dlg-conflicts-title">
+      <form method="dialog">
+        <h2 id="dlg-conflicts-title">Some profiles already exist</h2>
+        <p class="dialog-body">Ticked profiles are replaced by the imported copy. The rest are skipped.</p>
+        <fieldset class="conflicts" id="dlg-conflicts-list">
+          <legend class="visually-hidden">Profiles to overwrite</legend>
+        </fieldset>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn--quiet" value="cancel">Cancel import</button>
+          <button type="submit" class="btn btn--primary" value="ok">Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

@@ -7,3 +7,9 @@ release/
 .venv/
 venv/
 .DS_Store
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+.hallmark/before/
+.hallmark/shots/
+.hallmark/after/
